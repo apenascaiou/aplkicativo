@@ -30,8 +30,9 @@ import android.view.inputmethod.InputMethodManager;
 import android.widget.AbsListView;
 import android.widget.BaseAdapter;
 import android.widget.EditText;
+import android.text.TextUtils;
+import android.widget.GridView;
 import android.widget.LinearLayout;
-import android.widget.ListView;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -57,7 +58,8 @@ public final class MainActivity extends Activity {
     private static final long RELOAD_DELAY_MS = 400;
 
     private static final Pattern ACCENTS = Pattern.compile("\\p{M}+");
-    private static final Typeface LIGHT = Typeface.create("sans-serif-light", Typeface.NORMAL);
+    /** Comic Neue (licença OFL), carregada uma vez por processo. */
+    private static Typeface font;
 
     /** Cache em memória: reabrir a tela inicial não recarrega nada. */
     private static List<App> cache;
@@ -73,10 +75,9 @@ public final class MainActivity extends Activity {
     private final Handler main = new Handler(Looper.getMainLooper());
     private final Runnable reloadTask = this::reloadNow;
 
-    private ListView list;
+    private GridView list;
     private EditText search;
     private TextView hiddenFooter;
-    private boolean footerAttached;
     private Adapter adapter;
     private String query = "";
     private int hiddenCount;
@@ -163,10 +164,17 @@ public final class MainActivity extends Activity {
     private void buildUi() {
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
-        root.setPadding(dp(24), dp(16), dp(24), dp(12));
+        root.setPadding(dp(20), dp(16), dp(20), dp(12));
 
-        list = new ListView(this);
-        list.setDivider(null);
+        if (font == null) {
+            try { font = Typeface.createFromAsset(getAssets(), "comic.ttf"); }
+            catch (RuntimeException e) { font = Typeface.create("casual", Typeface.NORMAL); }
+        }
+
+        list = new GridView(this);
+        list.setNumColumns(2);
+        list.setStretchMode(GridView.STRETCH_COLUMN_WIDTH);
+        list.setHorizontalSpacing(dp(16));
         list.setVerticalScrollBarEnabled(false);
         list.setOverScrollMode(View.OVER_SCROLL_NEVER);
         list.setSelector(android.R.color.transparent);
@@ -176,6 +184,7 @@ public final class MainActivity extends Activity {
         hiddenFooter = row();
         hiddenFooter.setTextColor(0xFF666666);
         hiddenFooter.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
+        hiddenFooter.setVisibility(View.GONE);
         hiddenFooter.setOnClickListener(v -> showHiddenDialog());
 
         adapter = new Adapter();
@@ -199,6 +208,7 @@ public final class MainActivity extends Activity {
         search.setHintTextColor(0xFF555555);
         search.setTextColor(Color.WHITE);
         search.setTextSize(TypedValue.COMPLEX_UNIT_SP, 18);
+        search.setTypeface(font);
         search.setSingleLine(true);
         search.setBackground(null);
         search.setPadding(0, dp(12), 0, dp(12));
@@ -229,6 +239,7 @@ public final class MainActivity extends Activity {
         line.setBackgroundColor(0xFF222222);
 
         root.addView(list, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
+        root.addView(hiddenFooter, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         root.addView(line, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(1)));
         root.addView(search, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         setContentView(root);
@@ -237,9 +248,10 @@ public final class MainActivity extends Activity {
     private TextView row() {
         TextView t = new TextView(this);
         t.setTextColor(0xFFEEEEEE);
-        t.setTextSize(TypedValue.COMPLEX_UNIT_SP, 20);
-        t.setTypeface(LIGHT);
+        t.setTextSize(TypedValue.COMPLEX_UNIT_SP, 19);
+        t.setTypeface(font);
         t.setSingleLine(true);
+        t.setEllipsize(TextUtils.TruncateAt.END);
         t.setIncludeFontPadding(false);
         t.setGravity(Gravity.CENTER_VERTICAL);
         t.setMinHeight(dp(48)); // alvo de toque confortável
@@ -344,15 +356,10 @@ public final class MainActivity extends Activity {
         adapter.notifyDataSetChanged();
     }
 
-    /** Rodapé só existe quando há apps ocultos (GONE em rodapé de ListView ainda ocupa espaço). */
+    /** Linha "apps ocultos" fica abaixo da grade, só quando há apps ocultos. */
     private void updateFooter(boolean show) {
-        if (show) {
-            hiddenFooter.setText("apps ocultos (" + hiddenCount + ")");
-            if (!footerAttached) { list.addFooterView(hiddenFooter, null, true); footerAttached = true; }
-        } else if (footerAttached) {
-            list.removeFooterView(hiddenFooter);
-            footerAttached = false;
-        }
+        if (show) hiddenFooter.setText("apps ocultos (" + hiddenCount + ")");
+        hiddenFooter.setVisibility(show ? View.VISIBLE : View.GONE);
     }
 
     private void saveHidden() {
