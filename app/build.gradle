@@ -1,0 +1,30 @@
+plugins { id 'com.android.application' }
+android {
+    namespace 'br.araujo.launcher'
+    compileSdk 34
+    defaultConfig {
+        applicationId 'br.araujo.launcher'
+        minSdk 23
+        targetSdk 34
+        versionCode 2
+        versionName '1.1'
+    }
+    signingConfigs {
+        release {
+            storeFile file('../launcher.jks')
+            storePassword 'launcherleve'
+            keyAlias 'launcher'
+            keyPassword 'launcherleve'
+        }
+    }
+    buildTypes {
+        release {
+            minifyEnabled true
+            shrinkResources true
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt')
+            signingConfig signingConfigs.release
+        }
+    }
+    compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
+    dependenciesInfo { includeInApk false; includeInBundle false }
+}
