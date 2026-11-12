@@ -23,16 +23,15 @@ import android.text.TextWatcher;
 import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.KeyEvent;
+import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.inputmethod.EditorInfo;
 import android.view.inputmethod.InputMethodManager;
-import android.widget.AbsListView;
-import android.widget.BaseAdapter;
 import android.widget.EditText;
 import android.text.TextUtils;
-import android.widget.GridView;
 import android.widget.LinearLayout;
+import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -75,10 +74,17 @@ public final class MainActivity extends Activity {
     private final Handler main = new Handler(Looper.getMainLooper());
     private final Runnable reloadTask = this::reloadNow;
 
-    private GridView list;
+    /**
+     * Lista em ScrollView simples, sem GridView: o GridView guarda estado interno
+     * de seleção/foco que às vezes ficava preso ao voltar pelo botão home e
+     * matava a rolagem (o toque continuava funcionando).
+     */
+    private ScrollView scroll;
+    private LinearLayout rows;
+    /** Células já criadas, duas por linha; são reaproveitadas a cada filtro. */
+    private final List<TextView> cells = new ArrayList<>();
     private EditText search;
     private TextView hiddenFooter;
-    private Adapter adapter;
     private String query = "";
     private int hiddenCount;
 
@@ -152,7 +158,12 @@ public final class MainActivity extends Activity {
     private void resetView() {
         if (search.length() > 0) search.setText("");
         hideKeyboard();
-        list.setSelection(0);
+        scrollToTop();
+    }
+
+    private void scrollToTop() {
+        scroll.scrollTo(0, 0);
+        scroll.fling(0); // cancela um deslize que ainda estivesse em andamento
     }
 
     // ---------------------------------------------------------------- UI
@@ -171,37 +182,25 @@ public final class MainActivity extends Activity {
             catch (RuntimeException e) { font = Typeface.create("casual", Typeface.NORMAL); }
         }
 
-        list = new GridView(this);
-        list.setNumColumns(2);
-        list.setStretchMode(GridView.STRETCH_COLUMN_WIDTH);
-        list.setHorizontalSpacing(dp(16));
-        list.setVerticalScrollBarEnabled(false);
-        list.setOverScrollMode(View.OVER_SCROLL_NEVER);
-        list.setSelector(android.R.color.transparent);
-        list.setCacheColorHint(Color.BLACK);
-        list.setFastScrollEnabled(false);
+        rows = new LinearLayout(this);
+        rows.setOrientation(LinearLayout.VERTICAL);
+
+        scroll = new ScrollView(this);
+        scroll.setVerticalScrollBarEnabled(false);
+        scroll.setOverScrollMode(View.OVER_SCROLL_NEVER);
+        scroll.setFocusable(false);
+        scroll.addView(rows, new ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        // Arrastar a lista com o teclado aberto fecha o teclado.
+        scroll.setOnTouchListener((v, e) -> {
+            if (e.getActionMasked() == MotionEvent.ACTION_MOVE && search.hasFocus()) hideKeyboard();
+            return false;
+        });
 
         hiddenFooter = row();
         hiddenFooter.setTextColor(0xFF666666);
         hiddenFooter.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
         hiddenFooter.setVisibility(View.GONE);
         hiddenFooter.setOnClickListener(v -> showHiddenDialog());
-
-        adapter = new Adapter();
-        list.setAdapter(adapter);
-        list.setOnItemClickListener((p, v, pos, id) -> {
-            if (pos < shown.size()) launch(shown.get(pos));
-        });
-        list.setOnItemLongClickListener((p, v, pos, id) -> {
-            if (pos < shown.size()) showAppMenu(shown.get(pos));
-            return true;
-        });
-        list.setOnScrollListener(new AbsListView.OnScrollListener() {
-            @Override public void onScrollStateChanged(AbsListView v, int s) {
-                if (s == SCROLL_STATE_TOUCH_SCROLL) hideKeyboard();
-            }
-            @Override public void onScroll(AbsListView v, int a, int b, int c) { }
-        });
 
         search = new EditText(this);
         search.setHint("buscar");
@@ -225,7 +224,7 @@ public final class MainActivity extends Activity {
                 if (q.equals(query)) return;
                 query = q;
                 filter();
-                list.setSelection(0);
+                scrollToTop();
             }
         });
         search.setOnEditorActionListener((v, action, ev) -> {
@@ -238,7 +237,7 @@ public final class MainActivity extends Activity {
         View line = new View(this);
         line.setBackgroundColor(0xFF222222);
 
-        root.addView(list, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
+        root.addView(scroll, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
         root.addView(hiddenFooter, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         root.addView(line, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(1)));
         root.addView(search, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
@@ -256,28 +255,60 @@ public final class MainActivity extends Activity {
         t.setGravity(Gravity.CENTER_VERTICAL);
         t.setMinHeight(dp(48)); // alvo de toque confortável
         t.setPadding(0, dp(10), 0, dp(10));
-        t.setLayoutParams(new AbsListView.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         return t;
     }
 
-    private final class Adapter extends BaseAdapter {
-        @Override public int getCount() { return shown.size(); }
-        @Override public Object getItem(int i) { return shown.get(i); }
-        @Override public long getItemId(int i) { return i; }
-        @Override public boolean hasStableIds() { return false; }
+    /** Cria mais uma linha da grade, com duas células de mesma largura. */
+    private void addRow() {
+        LinearLayout line = new LinearLayout(this);
+        line.setOrientation(LinearLayout.HORIZONTAL);
+        for (int col = 0; col < 2; col++) {
+            TextView t = row();
+            t.setFocusable(false);
+            t.setOnClickListener(v -> {
+                Object a = v.getTag();
+                if (a instanceof App) launch((App) a);
+            });
+            t.setOnLongClickListener(v -> {
+                Object a = v.getTag();
+                if (a instanceof App) showAppMenu((App) a);
+                return true;
+            });
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+            if (col == 0) lp.rightMargin = dp(16);
+            line.addView(t, lp);
+            cells.add(t);
+        }
+        rows.addView(line, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+    }
 
-        @Override
-        public View getView(int i, View convert, ViewGroup parent) {
-            TextView t = convert instanceof TextView ? (TextView) convert : row();
-            t.setText(shown.get(i).display);
-            return t;
+    /** Mostra {@link #shown} na grade, reaproveitando as células existentes. */
+    private void render() {
+        int n = shown.size();
+        int needed = (n + 1) / 2;
+        while (rows.getChildCount() < needed) addRow();
+        for (int i = 0; i < cells.size(); i++) {
+            TextView t = cells.get(i);
+            if (i < n) {
+                App a = shown.get(i);
+                Object old = t.getTag();
+                if (!(old instanceof App) || !((App) old).display.equals(a.display)) t.setText(a.display);
+                t.setTag(a);
+                t.setVisibility(View.VISIBLE);
+            } else {
+                t.setTag(null);
+                t.setVisibility(View.INVISIBLE);
+            }
+        }
+        for (int r = 0; r < rows.getChildCount(); r++) {
+            rows.getChildAt(r).setVisibility(r < needed ? View.VISIBLE : View.GONE);
         }
     }
 
     private void hideKeyboard() {
         InputMethodManager imm = (InputMethodManager) getSystemService(INPUT_METHOD_SERVICE);
         if (imm != null) imm.hideSoftInputFromWindow(search.getWindowToken(), 0);
-        search.clearFocus();
+        if (search.hasFocus()) search.clearFocus();
     }
 
     // ---------------------------------------------------------------- dados
@@ -353,7 +384,7 @@ public final class MainActivity extends Activity {
             contains.clear();
         }
         updateFooter(hiddenCount > 0 && query.isEmpty());
-        adapter.notifyDataSetChanged();
+        render();
     }
 
     /** Linha "apps ocultos" fica abaixo da grade, só quando há apps ocultos. */
